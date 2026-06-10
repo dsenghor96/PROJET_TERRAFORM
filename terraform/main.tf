@@ -161,7 +161,7 @@ resource "aws_eks_node_group" "portfolio_nodes" {
   instance_types = [var.instance_type]
 
   scaling_config {
-    desired_size = 1
+    desired_size = 2
     min_size     = 1
     max_size     = 2
   }
@@ -171,4 +171,10 @@ resource "aws_eks_node_group" "portfolio_nodes" {
     aws_iam_role_policy_attachment.eks_cni_policy,
     aws_iam_role_policy_attachment.eks_ecr_policy
   ]
+}
+
+# Policy EBS CSI Driver pour les nodes
+resource "aws_iam_role_policy_attachment" "eks_ebs_csi_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.eks_node_role.name
 }

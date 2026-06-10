@@ -25,5 +25,5 @@ variable "subnet_cidr" {
 variable "instance_type" {
   description = "Type d'instance EC2"
   type        = string
-  default     = "t3.micro"
+  default     = "t3.small"
 }
