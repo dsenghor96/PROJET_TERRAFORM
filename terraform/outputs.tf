@@ -1,19 +1,19 @@
 output "vpc_id" {
-  description = "ID du VPC créé"
+  description = "ID du VPC"
   value       = aws_vpc.portfolio_vpc.id
 }
 
-output "subnet_id" {
-  description = "ID du Subnet créé"
-  value       = aws_subnet.portfolio_subnet.id
+output "eks_cluster_name" {
+  description = "Nom du cluster EKS"
+  value       = aws_eks_cluster.portfolio_cluster.name
 }
 
-output "ec2_public_ip" {
-  description = "IP publique de l'EC2"
-  value       = aws_instance.portfolio_ec2.public_ip
+output "eks_cluster_endpoint" {
+  description = "Endpoint du cluster EKS"
+  value       = aws_eks_cluster.portfolio_cluster.endpoint
 }
 
-output "ec2_instance_id" {
-  description = "ID de l'instance EC2"
-  value       = aws_instance.portfolio_ec2.id
+output "eks_kubeconfig_command" {
+  description = "Commande pour connecter kubectl à EKS"
+  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.portfolio_cluster.name}"
 }

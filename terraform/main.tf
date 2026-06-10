@@ -1,15 +1,9 @@
-# Data source - récupérer l'AMI Amazon Linux 2 la plus récente
-data "aws_ami" "amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
+# Data source - AZ disponibles
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
-# Resource 1 : VPC
+# VPC
 resource "aws_vpc" "portfolio_vpc" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
@@ -21,19 +15,33 @@ resource "aws_vpc" "portfolio_vpc" {
   }
 }
 
-# Resource 2 : Subnet public
-resource "aws_subnet" "portfolio_subnet" {
+# Subnet AZ-a
+resource "aws_subnet" "portfolio_subnet_a" {
   vpc_id                  = aws_vpc.portfolio_vpc.id
-  cidr_block              = var.subnet_cidr
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[0]
   map_public_ip_on_launch = true
 
   tags = {
-    Name    = "${var.project_name}-subnet"
+    Name    = "${var.project_name}-subnet-a"
     Project = var.project_name
   }
 }
 
-# Resource 3 : Internet Gateway
+# Subnet AZ-b
+resource "aws_subnet" "portfolio_subnet_b" {
+  vpc_id                  = aws_vpc.portfolio_vpc.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[1]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name    = "${var.project_name}-subnet-b"
+    Project = var.project_name
+  }
+}
+
+# Internet Gateway
 resource "aws_internet_gateway" "portfolio_igw" {
   vpc_id = aws_vpc.portfolio_vpc.id
 
@@ -43,7 +51,7 @@ resource "aws_internet_gateway" "portfolio_igw" {
   }
 }
 
-# Resource 4 : Route Table
+# Route Table
 resource "aws_route_table" "portfolio_rt" {
   vpc_id = aws_vpc.portfolio_vpc.id
 
@@ -58,20 +66,109 @@ resource "aws_route_table" "portfolio_rt" {
   }
 }
 
-# Association Route Table → Subnet
-resource "aws_route_table_association" "portfolio_rta" {
-  subnet_id      = aws_subnet.portfolio_subnet.id
+# Association Route Table → Subnet A
+resource "aws_route_table_association" "portfolio_rta_a" {
+  subnet_id      = aws_subnet.portfolio_subnet_a.id
   route_table_id = aws_route_table.portfolio_rt.id
 }
 
-# Resource 5 : EC2
-resource "aws_instance" "portfolio_ec2" {
-  ami           = data.aws_ami.amazon_linux.id
-  instance_type = var.instance_type
-  subnet_id     = aws_subnet.portfolio_subnet.id
+# Association Route Table → Subnet B
+resource "aws_route_table_association" "portfolio_rta_b" {
+  subnet_id      = aws_subnet.portfolio_subnet_b.id
+  route_table_id = aws_route_table.portfolio_rt.id
+}
 
-  tags = {
-    Name    = "${var.project_name}-ec2"
-    Project = var.project_name
+# IAM Role - EKS Cluster
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "${var.project_name}-eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+# IAM Role - EKS Node Group
+resource "aws_iam_role" "eks_node_role" {
+  name = "${var.project_name}-eks-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "portfolio_cluster" {
+  name     = "${var.project_name}-cluster"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  vpc_config {
+    subnet_ids = [
+      aws_subnet.portfolio_subnet_a.id,
+      aws_subnet.portfolio_subnet_b.id
+    ]
   }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+}
+
+# EKS Node Group
+resource "aws_eks_node_group" "portfolio_nodes" {
+  cluster_name    = aws_eks_cluster.portfolio_cluster.name
+  node_group_name = "${var.project_name}-nodes"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+
+  subnet_ids = [
+    aws_subnet.portfolio_subnet_a.id,
+    aws_subnet.portfolio_subnet_b.id
+  ]
+
+  instance_types = [var.instance_type]
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_ecr_policy
+  ]
 }
