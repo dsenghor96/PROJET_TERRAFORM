@@ -178,3 +178,117 @@ resource "aws_iam_role_policy_attachment" "eks_ebs_csi_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
   role       = aws_iam_role.eks_node_role.name
 }
+
+# OIDC Provider pour IRSA
+data "tls_certificate" "eks_oidc" {
+  url = aws_eks_cluster.portfolio_cluster.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks_oidc" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks_oidc.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.portfolio_cluster.identity[0].oidc[0].issuer
+
+  tags = {
+    Name    = "${var.project_name}-oidc"
+    Project = var.project_name
+  }
+}
+
+# EBS CSI Driver - Addon EKS managé
+resource "aws_eks_addon" "ebs_csi_driver" {
+  cluster_name             = aws_eks_cluster.portfolio_cluster.name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi_irsa_role.arn
+  resolve_conflicts_on_create = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.portfolio_nodes,
+    aws_iam_role_policy_attachment.ebs_csi_irsa_policy
+  ]
+
+  tags = {
+    Name    = "${var.project_name}-ebs-csi"
+    Project = var.project_name
+  }
+}
+
+# IRSA - IAM Role pour MongoDB (accès EBS)
+data "aws_iam_policy_document" "mongodb_irsa_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks_oidc.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks_oidc.url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:default:mongodb"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks_oidc.url, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "mongodb_irsa_role" {
+  name               = "${var.project_name}-mongodb-irsa"
+  assume_role_policy = data.aws_iam_policy_document.mongodb_irsa_trust.json
+
+  tags = {
+    Name    = "${var.project_name}-mongodb-irsa"
+    Project = var.project_name
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "mongodb_ebs_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.mongodb_irsa_role.name
+}
+
+# IRSA - IAM Role pour EBS CSI Driver
+data "aws_iam_policy_document" "ebs_csi_irsa_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks_oidc.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks_oidc.url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks_oidc.url, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi_irsa_role" {
+  name               = "${var.project_name}-ebs-csi-irsa"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_irsa_trust.json
+
+  tags = {
+    Name    = "${var.project_name}-ebs-csi-irsa"
+    Project = var.project_name
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_irsa_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi_irsa_role.name
+}
