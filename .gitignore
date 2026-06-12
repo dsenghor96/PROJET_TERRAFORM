@@ -9,3 +9,7 @@ terraform.tfstate.backup
 # OS
 .DS_Store
 Thumbs.db
+node_modules/
+.terraform/
+*.tfstate
+*.tfstate.backup
