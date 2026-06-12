@@ -429,7 +429,7 @@ kubectl describe svc nginx-ingress-controller -n ingress-nginx
 **Dieynaba SENGHOR**
 
 - Email : dsenghor96@gmail.com
-- GitHub : [github.com/dieys](https://github.com/dieys)
+- GitHub : [github.com/dieys](https://github.com/dsenghor96)
 - Docker Hub : [hub.docker.com/u/dieys](https://hub.docker.com/u/dieys)
 
 ---
