@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USER = "dieys"
-        BACKEND_IMAGE = "${DOCKERHUB_USER}/portfolio-api:${BUILD_NUMBER}"
-        KUBECONFIG = "/var/jenkins_home/.kube/config"
-	FRONTEND_IMAGE = "${DOCKERHUB_USER}/portfolio-react:${BUILD_NUMBER}"
+        DOCKERHUB_USER  = "dieys"
+        BACKEND_IMAGE   = "${DOCKERHUB_USER}/portfolio-api:${BUILD_NUMBER}"
+        FRONTEND_IMAGE  = "${DOCKERHUB_USER}/portfolio-react:${BUILD_NUMBER}"
+        AWS_REGION      = "us-east-1"
+        TF_DIR          = "terraform"
     }
 
     stages {
@@ -45,7 +46,6 @@ pipeline {
                         sh "docker build -t ${BACKEND_IMAGE} ./api"
                     }
                 }
-
                 stage('Frontend') {
                     steps {
                         sh "docker build -t ${FRONTEND_IMAGE} ./ux_react"
@@ -76,30 +76,52 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
- 	   steps {
-        	sh '''
-            	    kubectl apply -f k8s/configmap/app-configmap.yaml
-            	    kubectl apply -f k8s/secret/app-secret.yaml
-            	    kubectl apply -f k8s/mongodb/statefulset.yaml
-            	    kubectl apply -f k8s/mongodb/service.yaml
-            	    kubectl apply -f k8s/backend/deployment.yaml
-            	    kubectl apply -f k8s/backend/service.yaml
-            	    kubectl apply -f k8s/frontend/deployment.yaml
-            	    kubectl apply -f k8s/frontend/service.yaml
-            	    kubectl apply -f k8s/ingress/ingress.yaml
-            	    kubectl rollout restart deployment backend
-            	    kubectl rollout restart deployment frontend
-            	    kubectl rollout status deployment backend
-            	    kubectl rollout status deployment frontend
-        	'''
-    	     }
-	}		
+        stage('Terraform Init') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        cd ${TF_DIR}
+                        terraform init
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        cd ${TF_DIR}
+                        terraform plan
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        cd ${TF_DIR}
+                        terraform apply -auto-approve
+                    '''
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo "Pipeline execute avec succes"
+            echo "Pipeline execute avec succes - App MERN deployee sur EKS"
 
             emailext(
                 subject: "Jenkins - Build #${BUILD_NUMBER} reussi",
